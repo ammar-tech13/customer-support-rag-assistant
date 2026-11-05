@@ -33,7 +33,7 @@ pydantic>=2.9.0,<3.0.0
 python-multipart==0.0.9
 
 # UI
-streamlit==1.66.1
+
 
 # File Watching
 watchdog==4.0.0
