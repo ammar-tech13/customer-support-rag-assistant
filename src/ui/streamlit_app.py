@@ -1,25 +1,16 @@
 
 """SupportAI - Customer Support RAG Assistant."""
 
-import hashlib
-from pathlib import Path
+import os
 from typing import Any, Dict
 
 import requests
 import streamlit as st
 
-from config.config import DOCUMENTS_DIR
-
 
 # ============================================================
 # 1. CONFIGURATION
 # ============================================================
-
-API_BASE_URL = "http://localhost:8000"
-
-HEALTH_URL = f"{API_BASE_URL}/api/health"
-QUERY_URL = f"{API_BASE_URL}/api/query"
-PROCESS_URL = f"{API_BASE_URL}/api/process_document"
 
 st.set_page_config(
     page_title="SupportAI | Customer Support",
@@ -27,6 +18,22 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Streamlit Cloud: configure API_BASE_URL in App Settings > Secrets.
+# Local development: falls back to localhost.
+try:
+    secrets_api_url = st.secrets.get("API_BASE_URL", "")
+except Exception:
+    secrets_api_url = ""
+
+API_BASE_URL = (
+    secrets_api_url
+    or os.getenv("API_BASE_URL", "http://localhost:8000")
+).rstrip("/")
+
+HEALTH_URL = f"{API_BASE_URL}/api/health"
+QUERY_URL = f"{API_BASE_URL}/api/query"
+PROCESS_URL = f"{API_BASE_URL}/api/process_document"
 
 
 # ============================================================
@@ -204,8 +211,6 @@ st.markdown(
         border-bottom: 3px solid #655bd5 !important;
     }
 
-    /* File uploader */
-
     div[data-testid="stFileUploader"] {
         background: #ffffff !important;
         border: 1px dashed #aebbe4 !important;
@@ -216,8 +221,6 @@ st.markdown(
     div[data-testid="stFileUploader"] * {
         color: #34415c !important;
     }
-
-    /* Chat answer readability */
 
     [data-testid="stChatMessage"] {
         background: #ffffff !important;
@@ -230,8 +233,7 @@ st.markdown(
     [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
     [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
     [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li,
-    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] strong,
-    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] span {
+    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] strong {
         color: #26334d !important;
         opacity: 1 !important;
     }
@@ -268,9 +270,9 @@ st.markdown(
 # ============================================================
 
 def check_api() -> bool:
-    """Check FastAPI availability."""
+    """Check whether the FastAPI backend is available."""
     try:
-        response = requests.get(HEALTH_URL, timeout=5)
+        response = requests.get(HEALTH_URL, timeout=8)
         return response.ok
     except requests.RequestException:
         return False
@@ -281,9 +283,13 @@ def query_rag(query: str, k: int) -> Dict[str, Any]:
     try:
         response = requests.post(
             QUERY_URL,
-            json={"query": query, "k": k},
+            json={
+                "query": query,
+                "k": k,
+            },
             timeout=120,
         )
+
         response.raise_for_status()
         return response.json()
 
@@ -291,19 +297,46 @@ def query_rag(query: str, k: int) -> Dict[str, Any]:
         return {"error": str(exc)}
 
 
-def process_document(file_path: str) -> Dict[str, Any]:
-    """Process a document through FastAPI."""
+def process_document(uploaded_file) -> Dict[str, Any]:
+    """Upload a document directly to the FastAPI backend."""
     try:
+        files = {
+            "file": (
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                uploaded_file.type or "application/octet-stream",
+            )
+        }
+
         response = requests.post(
             PROCESS_URL,
-            json={"file_path": file_path},
+            files=files,
             timeout=300,
         )
-        response.raise_for_status()
+
+        try:
+            data = response.json()
+        except ValueError:
+            data = {}
+
+        if response.ok:
+            return {
+                "success": True,
+                "data": data,
+            }
 
         return {
-            "success": True,
-            "data": response.json(),
+            "success": False,
+            "error": data.get(
+                "detail",
+                f"Backend returned HTTP {response.status_code}",
+            ),
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "error": "Document processing timed out. Please try again.",
         }
 
     except requests.RequestException as exc:
@@ -314,35 +347,7 @@ def process_document(file_path: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# 4. FILE UTILITIES
-# ============================================================
-
-def calculate_hash(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
-
-
-def is_duplicate(content: bytes) -> bool:
-    """Check for identical files in the documents folder."""
-    folder = Path(DOCUMENTS_DIR)
-    folder.mkdir(parents=True, exist_ok=True)
-
-    uploaded_hash = calculate_hash(content)
-
-    for file in folder.rglob("*"):
-        if not file.is_file():
-            continue
-
-        try:
-            if calculate_hash(file.read_bytes()) == uploaded_hash:
-                return True
-        except OSError:
-            continue
-
-    return False
-
-
-# ============================================================
-# 5. SESSION STATE
+# 4. SESSION STATE
 # ============================================================
 
 if "messages" not in st.session_state:
@@ -356,7 +361,7 @@ if "pending_question" not in st.session_state:
 
 
 # ============================================================
-# 6. SIDEBAR
+# 5. SIDEBAR
 # ============================================================
 
 with st.sidebar:
@@ -381,7 +386,7 @@ with st.sidebar:
             '<span class="offline">● API Disconnected</span>',
             unsafe_allow_html=True,
         )
-        st.caption("Start the backend using: python run_api.py")
+        st.caption("Check your FastAPI backend URL and service.")
 
     if st.button("Refresh connection", use_container_width=True):
         st.rerun()
@@ -420,7 +425,7 @@ with st.sidebar:
 
 
 # ============================================================
-# 7. HERO
+# 6. HERO SECTION
 # ============================================================
 
 st.markdown(
@@ -443,7 +448,7 @@ st.markdown(
 
 
 # ============================================================
-# 8. MAIN TABS
+# 7. MAIN TABS
 # ============================================================
 
 chat_tab, knowledge_tab = st.tabs(
@@ -452,7 +457,7 @@ chat_tab, knowledge_tab = st.tabs(
 
 
 # ============================================================
-# 9. CHAT ASSISTANT
+# 8. CHAT ASSISTANT
 # ============================================================
 
 with chat_tab:
@@ -489,14 +494,12 @@ with chat_tab:
 
     st.write("")
 
-    # Display previous messages
-
+    # Display conversation history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Input form
-
+    # Question input
     with st.form("question_form", clear_on_submit=True):
 
         user_question = st.text_area(
@@ -521,13 +524,17 @@ with chat_tab:
     elif submitted:
         question_to_process = user_question.strip()
 
+    # Process question
     if question_to_process:
 
-        if not question_to_process:
+        if not question_to_process.strip():
             st.warning("Please enter a question.")
 
         elif not api_connected:
-            st.error("FastAPI is disconnected. Start the backend first.")
+            st.error(
+                "FastAPI is disconnected. "
+                "Please check the backend service."
+            )
 
         else:
 
@@ -537,6 +544,7 @@ with chat_tab:
             })
 
             with st.spinner("Searching your knowledge base..."):
+
                 result = query_rag(
                     question_to_process,
                     retrieval_k,
@@ -558,17 +566,21 @@ with chat_tab:
                     "I couldn't generate an answer.",
                 )
 
+                if isinstance(answer, list):
+                    answer = "\n".join(
+                        str(item) for item in answer
+                    )
+
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": answer,
+                    "content": str(answer),
                 })
 
                 st.session_state.last_result = result
 
             st.rerun()
 
-    # Optional sources
-
+    # Retrieved sources
     result = st.session_state.last_result
 
     if result and show_sources:
@@ -579,6 +591,7 @@ with chat_tab:
         chunks = result.get("retrieved_chunks", [])
 
         if chunks:
+
             for index, chunk in enumerate(chunks, start=1):
 
                 metadata = chunk.get("metadata") or {}
@@ -600,15 +613,18 @@ with chat_tab:
                 ):
 
                     if isinstance(score, (int, float)):
-                        st.caption(f"Retrieval score: {score:.4f}")
+                        st.caption(
+                            f"Retrieval score: {score:.4f}"
+                        )
 
-                    st.markdown(chunk.get("content", ""))
+                    st.markdown(
+                        chunk.get("content", "")
+                    )
 
         else:
             st.info("No sources were returned.")
 
-    # Optional validation
-
+    # Validation details
     if result and show_validation:
 
         st.divider()
@@ -617,13 +633,21 @@ with chat_tab:
         confidence = result.get("confidence_score")
 
         if isinstance(confidence, (int, float)):
-            st.metric("Validation score", f"{confidence:.2%}")
+            st.metric(
+                "Validation score",
+                f"{confidence:.2%}",
+            )
 
-        st.json(result.get("validation", {}))
+        validation = result.get("validation", {})
+
+        if validation:
+            st.json(validation)
+        else:
+            st.info("No validation details were returned.")
 
 
 # ============================================================
-# 10. KNOWLEDGE BASE / DOCUMENT UPLOAD
+# 9. KNOWLEDGE BASE / DOCUMENT UPLOAD
 # ============================================================
 
 with knowledge_tab:
@@ -639,9 +663,7 @@ with knowledge_tab:
 
     st.write("")
 
-    # IMPORTANT: Do not disable the uploader when API is offline.
-    # Users can always select their documents.
-
+    # The uploader remains enabled even if the API is offline.
     uploaded_file = st.file_uploader(
         "Choose a PDF or DOCX document",
         type=["pdf", "docx"],
@@ -653,8 +675,6 @@ with knowledge_tab:
     if uploaded_file:
 
         content = uploaded_file.getvalue()
-
-        st.success("Document selected successfully.")
 
         file_col, size_col = st.columns([3, 1])
 
@@ -669,11 +689,9 @@ with knowledge_tab:
         if not api_connected:
 
             st.warning(
-                "Your PDF is selected, but FastAPI is offline. "
-                "Start the backend to process this document."
+                "Your document is selected, but the backend is "
+                "currently unavailable. Try again when the API is online."
             )
-
-            st.code("python run_api.py", language="bash")
 
         else:
 
@@ -684,59 +702,28 @@ with knowledge_tab:
                 key="process_document_button",
             ):
 
-                folder = Path(DOCUMENTS_DIR)
-                folder.mkdir(parents=True, exist_ok=True)
+                with st.spinner(
+                    "Uploading, extracting, chunking and indexing your document..."
+                ):
 
-                filename = Path(uploaded_file.name).name
-                file_path = folder / filename
+                    result = process_document(uploaded_file)
 
-                if is_duplicate(content):
+                if result["success"]:
 
-                    st.warning(
-                        "This exact document already exists "
-                        "in your documents folder."
+                    message = result["data"].get(
+                        "message",
+                        "Document processed successfully.",
                     )
 
-                elif file_path.exists():
-
-                    st.error(
-                        "A different document with this filename "
-                        "already exists. Rename your new file."
-                    )
+                    st.success(message)
+                    st.balloons()
 
                 else:
 
-                    try:
-
-                        file_path.write_bytes(content)
-
-                        with st.spinner(
-                            "Extracting, chunking and indexing your document..."
-                        ):
-
-                            result = process_document(str(file_path))
-
-                        if result["success"]:
-
-                            st.success(
-                                f"'{filename}' was processed successfully!"
-                            )
-
-                            st.balloons()
-
-                        else:
-
-                            # Keep the file so it can be retried.
-                            st.error(
-                                "Document processing failed: "
-                                + result["error"]
-                            )
-
-                    except OSError as exc:
-
-                        st.error(
-                            f"Could not save your document: {exc}"
-                        )
+                    st.error(
+                        "Document processing failed: "
+                        + str(result["error"])
+                    )
 
     else:
 
@@ -746,7 +733,7 @@ with knowledge_tab:
 
 
 # ============================================================
-# 11. FOOTER
+# 10. FOOTER
 # ============================================================
 
 st.divider()

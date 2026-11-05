@@ -1,6 +1,7 @@
 """FastAPI server for the RAG system."""
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -45,9 +46,69 @@ class QueryResponse(BaseModel):
     validation: Dict[str, Any]
 
 
-class ProcessDocumentRequest(BaseModel):
-    """Request model for document processing."""
-    file_path: Optional[str] = None
+@app.post("/api/process_document")
+async def process_document(file: UploadFile = File(...)):
+    """Upload and process a document."""
+
+    try:
+        if not document_processor:
+            raise HTTPException(
+                status_code=500,
+                detail="Document processor not initialized"
+            )
+
+        filename = Path(file.filename or "").name
+
+        if not filename.lower().endswith((".pdf", ".docx")):
+            raise HTTPException(
+                status_code=400,
+                detail="Only PDF and DOCX files are supported"
+            )
+
+        content = await file.read()
+
+        if not content:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is empty"
+            )
+
+        file_path = Path(DOCUMENTS_DIR) / filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if file_path.exists():
+            raise HTTPException(
+                status_code=409,
+                detail="A file with this name already exists"
+            )
+
+        file_path.write_bytes(content)
+
+        success = document_processor.process_document(str(file_path))
+
+        if not success:
+            file_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Document processing failed"
+            )
+
+        document_processor.save_vector_store()
+
+        return {
+            "status": "success",
+            "message": f"{filename} processed successfully"
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.exception("Document processing error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        await file.close()
 
 
 def initialize_components():
