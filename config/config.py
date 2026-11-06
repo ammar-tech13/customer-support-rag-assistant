@@ -21,7 +21,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
 # Model Configuration
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.8-flash")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.5-flash-lite")
 
 # Server Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
