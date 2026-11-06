@@ -272,7 +272,7 @@ st.markdown(
 def check_api() -> bool:
     """Check whether the FastAPI backend is available."""
     try:
-        response = requests.get(HEALTH_URL, timeout=8)
+        response = requests.get(HEALTH_URL, timeout=60)
         return response.ok
     except requests.RequestException:
         return False
