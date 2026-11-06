@@ -34,7 +34,7 @@ API_BASE_URL = (
 HEALTH_URL = f"{API_BASE_URL}/api/health"
 QUERY_URL = f"{API_BASE_URL}/api/query"
 PROCESS_URL = f"{API_BASE_URL}/api/process_document"
-st.sidebar.caption(f"Backend URL: {API_BASE_URL}")
+
 
 # ============================================================
 # 2. PROFESSIONAL LIGHT THEME
